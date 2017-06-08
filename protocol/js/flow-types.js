@@ -5711,6 +5711,12 @@ export type TeamChangeReq = {
 
 export type TeamID = string
 
+export type TeamMember = {
+  uid: UID,
+  role: string,
+  eldestSeqno: Seqno,
+}
+
 export type TeamMembers = {
   owners?: ?Array<string>,
   admins?: ?Array<string>,
