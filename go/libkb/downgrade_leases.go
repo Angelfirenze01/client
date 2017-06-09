@@ -25,6 +25,14 @@ func sigIDsToString(sigIDs []keybase1.SigID) string {
 	return strings.Join(tmp, ",")
 }
 
+func uidsToString(uids []keybase1.UID) string {
+	var tmp []string
+	for _, k := range uids {
+		tmp = append(tmp, string(k))
+	}
+	return strings.Join(tmp, ",")
+}
+
 type Lease struct {
 	MerkleSeqno keybase1.Seqno    `json:"merkle_seqno"`
 	LeaseID     keybase1.LeaseID  `json:"downgrade_lease_id"`
@@ -64,6 +72,23 @@ func RequestDowngradeLeaseBySigIDs(ctx context.Context, g *GlobalContext, sigIDs
 		NetContext:  ctx,
 		Args: HTTPArgs{
 			"sig_ids": S{sigIDsToString(sigIDs)},
+		},
+	}, &res)
+	if err != nil {
+		return nil, nil, err
+	}
+	return leaseWithMerkleRoot(ctx, g, res)
+}
+
+func RequestDowngradeLeaseByTeam(ctx context.Context, g *GlobalContext, teamID keybase1.TeamID, uids []keybase1.UID) (lease *Lease, mr *MerkleRoot, err error) {
+	var res leaseReply
+	err = g.API.PostDecode(APIArg{
+		Endpoint:    "downgrade/team",
+		SessionType: APISessionTypeREQUIRED,
+		NetContext:  ctx,
+		Args: HTTPArgs{
+			"team_id": S{string(teamID)},
+			"uids":    S{uidsToString(uids)},
 		},
 	}, &res)
 	if err != nil {

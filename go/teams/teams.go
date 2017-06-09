@@ -263,52 +263,66 @@ func (t *Team) applicationKeyForMask(mask keybase1.ReaderKeyMask, secret []byte)
 	return key, nil
 }
 
+func (t *Team) getDowngradedUIDs(ms *memberSet) []keybase1.UID {
+	return nil
+}
+
 func (t *Team) ChangeMembership(ctx context.Context, req keybase1.TeamChangeReq) error {
 	// create the change membership section + secretBoxes
-	section, secretBoxes, err := t.changeMembershipSection(ctx, req)
+	section, secretBoxes, memberSet, err := t.changeMembershipSection(ctx, req)
 	if err != nil {
 		return err
 	}
 
+	var merkleRoot *libkb.MerkleRoot
+	var lease *libkb.Lease
+
+	if downgrades := t.getDowngradedUIDs(memberSet); len(downgrades) != 0 {
+		lease, merkleRoot, err = libkb.RequestDowngradeLeaseByTeam(ctx, t.G(), t.Chain.GetID(), downgrades)
+		if err != nil {
+			return err
+		}
+	}
+
 	// create the change item
-	sigMultiItem, err := t.sigChangeItem(section)
+	sigMultiItem, err := t.sigChangeItem(section, merkleRoot)
 	if err != nil {
 		return err
 	}
 
 	// make the payload
-	payload := t.sigPayload(sigMultiItem, secretBoxes)
+	payload := t.sigPayload(sigMultiItem, secretBoxes, lease)
 
 	// send it to the server
 	return t.postMulti(payload)
 }
 
-func (t *Team) changeMembershipSection(ctx context.Context, req keybase1.TeamChangeReq) (SCTeamSection, *PerTeamSharedSecretBoxes, error) {
+func (t *Team) changeMembershipSection(ctx context.Context, req keybase1.TeamChangeReq) (SCTeamSection, *PerTeamSharedSecretBoxes, *memberSet, error) {
 	// make keys for the team
 	if _, err := t.SharedSecret(ctx); err != nil {
-		return SCTeamSection{}, nil, err
+		return SCTeamSection{}, nil, nil, err
 	}
 
 	// load the member set specified in req
 	memSet, err := newMemberSet(ctx, t.G(), req)
 	if err != nil {
-		return SCTeamSection{}, nil, err
+		return SCTeamSection{}, nil, nil, err
 	}
 
 	// create the team section of the signature
 	section, err := memSet.Section(t.Chain.GetID())
 	if err != nil {
-		return SCTeamSection{}, nil, err
+		return SCTeamSection{}, nil, nil, err
 	}
 
 	// create secret boxes for recipients, possibly rotating the key
 	secretBoxes, perTeamKeySection, err := t.recipientBoxes(ctx, memSet)
 	if err != nil {
-		return SCTeamSection{}, nil, err
+		return SCTeamSection{}, nil, nil, err
 	}
 	section.PerTeamKey = perTeamKeySection
 
-	return section, secretBoxes, nil
+	return section, secretBoxes, memSet, nil
 }
 
 func (t *Team) loadMe() (*libkb.User, error) {
@@ -323,7 +337,7 @@ func (t *Team) loadMe() (*libkb.User, error) {
 	return t.me, nil
 }
 
-func (t *Team) sigChangeItem(section SCTeamSection) (libkb.SigMultiItem, error) {
+func (t *Team) sigChangeItem(section SCTeamSection, merkleRoot *libkb.MerkleRoot) (libkb.SigMultiItem, error) {
 	me, err := t.loadMe()
 	if err != nil {
 		return libkb.SigMultiItem{}, err
@@ -336,7 +350,7 @@ func (t *Team) sigChangeItem(section SCTeamSection) (libkb.SigMultiItem, error) 
 	if err != nil {
 		return libkb.SigMultiItem{}, err
 	}
-	sig, err := ChangeMembershipSig(me, latestLinkID1, t.NextSeqno(), deviceSigningKey, section)
+	sig, err := ChangeMembershipSig(me, latestLinkID1, t.NextSeqno(), deviceSigningKey, section, merkleRoot)
 	if err != nil {
 		return libkb.SigMultiItem{}, err
 	}
@@ -436,10 +450,13 @@ func (t *Team) recipientBoxes(ctx context.Context, memSet *memberSet) (*PerTeamS
 	return boxes, nil, err
 }
 
-func (t *Team) sigPayload(sigMultiItem libkb.SigMultiItem, secretBoxes *PerTeamSharedSecretBoxes) libkb.JSONPayload {
+func (t *Team) sigPayload(sigMultiItem libkb.SigMultiItem, secretBoxes *PerTeamSharedSecretBoxes, lease *libkb.Lease) libkb.JSONPayload {
 	payload := make(libkb.JSONPayload)
 	payload["sigs"] = []interface{}{sigMultiItem}
 	payload["per_team_key"] = secretBoxes
+	if lease != nil {
+		payload["downgrade_lease_id"] = lease.LeaseID
+	}
 
 	if t.G().VDL.DumpPayload() {
 		pretty, err := json.MarshalIndent(payload, "", "\t")
