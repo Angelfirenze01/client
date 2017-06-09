@@ -264,6 +264,8 @@ func (t *Team) applicationKeyForMask(mask keybase1.ReaderKeyMask, secret []byte)
 }
 
 func (t *Team) getDowngradedUIDs(ms *memberSet) []keybase1.UID {
+	// TODO -- need to figure out which UIDs are being downgraded from their
+	// representations in teams given the memberSet.
 	return nil
 }
 
